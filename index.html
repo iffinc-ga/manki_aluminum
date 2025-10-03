@@ -115,7 +115,7 @@
                 reader.readAsArrayBuffer(file);
             };
 
-            const findTariffValue = (partNumber) => {
+            const findTariffValue = (partNumber, materialType) => {
                 // Normalize the part number for comparison (convert to string and trim)
                 const normalizedPartNumber = String(partNumber || '').trim();
                 
@@ -152,15 +152,20 @@
                     return tariffCol === normalizedTariff;
                 });
 
-                if (mapping && mapping[1]) {
-                    return { found: true, value: mapping[1], tariff: tariffNumber };
+                // Determine which column to use based on material type
+                // Column 1 = Aluminum, Column 2 = Steel
+                const columnIndex = materialType === 'aluminum' ? 1 : 2;
+                
+                if (mapping && mapping[columnIndex]) {
+                    return { found: true, value: mapping[columnIndex], tariff: tariffNumber, materialType };
                 }
 
-                // Default to ALUM EXCL GENERIC if no mapping found
-                return { found: true, value: 'ALUM EXCL GENERIC', tariff: tariffNumber, usingDefault: true };
+                // Default based on material type if no mapping found
+                const defaultValue = materialType === 'aluminum' ? 'ALUM EXCL GENERIC' : 'STEEL EXCL GENERIC';
+                return { found: true, value: defaultValue, tariff: tariffNumber, usingDefault: true, materialType };
             };
 
-            const duplicateRow = () => {
+            const duplicateRow = (materialType) => {
                 if (selectedRow === null) {
                     setMessage({ type: 'error', text: 'Please select a row to duplicate' });
                     return;
@@ -169,8 +174,8 @@
                 const rowToDuplicate = invoiceData[selectedRow];
                 const partNumber = rowToDuplicate.BuyerPartNumber;
                 
-                // Get the tariff value
-                const tariffResult = findTariffValue(partNumber);
+                // Get the tariff value based on material type
+                const tariffResult = findTariffValue(partNumber, materialType);
                 
                 if (!tariffResult.found) {
                     setMessage({ type: 'error', text: tariffResult.reason });
@@ -191,9 +196,10 @@
 
                 setInvoiceData(newData);
                 
+                const materialLabel = materialType === 'aluminum' ? 'Aluminum' : 'Steel';
                 const messageText = tariffResult.usingDefault 
-                    ? `Row duplicated with default value. Tariff ${tariffResult.tariff} not found in mappings.`
-                    : `Row duplicated successfully! Applied: ${tariffResult.value} (Tariff: ${tariffResult.tariff})`;
+                    ? `Row duplicated for ${materialLabel} with default value. Tariff ${tariffResult.tariff} not found in mappings.`
+                    : `Row duplicated for ${materialLabel}! Applied: ${tariffResult.value} (Tariff: ${tariffResult.tariff})`;
                 
                 setMessage({ type: 'success', text: messageText });
                 setSelectedRow(selectedRow + 1); // Select the newly created row
@@ -220,7 +226,7 @@
                     <div className="max-w-7xl mx-auto">
                         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
                             <h1 className="text-3xl font-bold text-gray-800 mb-2">Invoice Line Duplicator</h1>
-                            <p className="text-gray-600 mb-6">Upload an invoice file, select a row, and duplicate it with automated part number mapping</p>
+                            <p className="text-gray-600 mb-6">Upload an invoice file, select a row, and duplicate it for Aluminum or Steel with automated part number mapping</p>
                             
                             {/* Message Display */}
                             {message && (
@@ -254,12 +260,21 @@
                                 </button>
                                 
                                 <button
-                                    onClick={duplicateRow}
+                                    onClick={() => duplicateRow('aluminum')}
                                     disabled={selectedRow === null || invoiceData.length === 0 || !dbLoaded}
                                     className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
                                 >
                                     <Copy className="w-5 h-5" />
-                                    Duplicate Selected Row
+                                    Duplicate for Aluminum
+                                </button>
+
+                                <button
+                                    onClick={() => duplicateRow('steel')}
+                                    disabled={selectedRow === null || invoiceData.length === 0 || !dbLoaded}
+                                    className="flex items-center gap-2 px-6 py-3 bg-slate-600 text-white rounded-lg hover:bg-slate-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                >
+                                    <Copy className="w-5 h-5" />
+                                    Duplicate for Steel
                                 </button>
 
                                 <button
