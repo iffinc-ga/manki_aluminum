@@ -196,7 +196,7 @@
                 const newRow = { ...rowToDuplicate };
                 newRow.BuyerPartNumber = tariffResult.value;
                 newRow.SupplierPartNumber = tariffResult.value;
-                newRow._isDuplicate = true; // FIXED: Mark as duplicate for deletion tracking
+                newRow._isDuplicate = true; // Mark as duplicate for deletion tracking
 
                 // Check if custom values were provided
                 const hasCustomValues = quantity !== '' || unitPrice !== '' || itemTotal !== '';
@@ -262,8 +262,8 @@
                 }
                 
                 setMessage({ type: 'success', text: messageText });
-                // FIXED: Keep selection on the original row so multiple duplicates stack in order
-                // setSelectedRow(selectedRow + 1); // Commented out to maintain selection
+                // FIXED: Move selection to the newly created duplicate so next duplication happens after it
+                setSelectedRow(selectedRow + 1);
                 
                 // Clear the input fields after duplication
                 setQuantity('');
