@@ -196,6 +196,7 @@
                 const newRow = { ...rowToDuplicate };
                 newRow.BuyerPartNumber = tariffResult.value;
                 newRow.SupplierPartNumber = tariffResult.value;
+                newRow._isDuplicate = true; // FIXED: Mark as duplicate for deletion tracking
 
                 // Check if custom values were provided
                 const hasCustomValues = quantity !== '' || unitPrice !== '' || itemTotal !== '';
@@ -261,7 +262,8 @@
                 }
                 
                 setMessage({ type: 'success', text: messageText });
-                setSelectedRow(selectedRow + 1); // Select the newly created row
+                // FIXED: Keep selection on the original row so multiple duplicates stack in order
+                // setSelectedRow(selectedRow + 1); // Commented out to maintain selection
                 
                 // Clear the input fields after duplication
                 setQuantity('');
@@ -520,7 +522,7 @@
                                                 <tr
                                                     key={index}
                                                     onClick={() => setSelectedRow(index)}
-                                                    className={`transition-colors ${
+                                                    className={`transition-colors cursor-pointer ${
                                                         selectedRow === index
                                                             ? 'bg-blue-100'
                                                             : row._isDuplicate 
