@@ -35,6 +35,12 @@
             </svg>
         );
 
+        const Trash = ({ className }) => (
+            <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+        );
+
         const AlertCircle = ({ className }) => (
             <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -55,6 +61,10 @@
             const [message, setMessage] = useState(null);
             const [fileName, setFileName] = useState('');
             const [dbLoaded, setDbLoaded] = useState(false);
+            const [quantity, setQuantity] = useState('');
+            const [unitPrice, setUnitPrice] = useState('');
+            const [itemTotal, setItemTotal] = useState('');
+            const [nextGroupId, setNextGroupId] = useState(1);
             
             const fileInputRef = useRef(null);
 
@@ -130,7 +140,7 @@
                 }
 
                 // Look for tariff numbers that start with 3
-                const tariffColumns = ['TARIFF NUM', 'TARIFF NUM2', 'TARIFF NUM3'];
+                const tariffColumns = ['TARIFF NUM', 'TARIFF NUM2', 'TARIFF NUM51'];
                 let tariffNumber = null;
                 
                 for (const col of tariffColumns) {
@@ -187,8 +197,53 @@
                 newRow.BuyerPartNumber = tariffResult.value;
                 newRow.SupplierPartNumber = tariffResult.value;
 
-                // Insert the new row after the selected row
-                const newData = [
+                // Check if custom values were provided
+                const hasCustomValues = quantity !== '' || unitPrice !== '' || itemTotal !== '';
+                let newRowItemTotal = rowToDuplicate.ItemTotal; // Default to original
+
+                // Apply custom values if provided, otherwise keep original values
+                if (quantity !== '') {
+                    newRow.Quantity = parseFloat(quantity);
+                }
+                if (unitPrice !== '') {
+                    newRow.UnitPrice = parseFloat(unitPrice);
+                }
+                if (itemTotal !== '') {
+                    newRow.ItemTotal = parseFloat(itemTotal);
+                    newRowItemTotal = parseFloat(itemTotal);
+                } else if (quantity !== '' && unitPrice !== '') {
+                    // Auto-calculate ItemTotal if Quantity and UnitPrice are provided but ItemTotal is not
+                    newRow.ItemTotal = parseFloat(quantity) * parseFloat(unitPrice);
+                    newRowItemTotal = parseFloat(quantity) * parseFloat(unitPrice);
+                } else if (quantity !== '' || unitPrice !== '') {
+                    // If only one of quantity or unitPrice is provided, recalculate ItemTotal
+                    const finalQuantity = quantity !== '' ? parseFloat(quantity) : rowToDuplicate.Quantity;
+                    const finalUnitPrice = unitPrice !== '' ? parseFloat(unitPrice) : rowToDuplicate.UnitPrice;
+                    newRow.ItemTotal = finalQuantity * finalUnitPrice;
+                    newRowItemTotal = finalQuantity * finalUnitPrice;
+                }
+
+                // If custom values were provided, reduce the original row's ItemTotal
+                let updatedOriginalRow = rowToDuplicate;
+                if (hasCustomValues) {
+                    updatedOriginalRow = { ...rowToDuplicate };
+                    updatedOriginalRow.ItemTotal = (rowToDuplicate.ItemTotal || 0) - newRowItemTotal;
+                    
+                    // Also update quantity if only quantity was changed
+                    if (quantity !== '' && unitPrice === '' && itemTotal === '') {
+                        const remainingQty = (rowToDuplicate.Quantity || 0) - parseFloat(quantity);
+                        updatedOriginalRow.Quantity = remainingQty;
+                        updatedOriginalRow.ItemTotal = remainingQty * (rowToDuplicate.UnitPrice || 0);
+                    }
+                }
+
+                // Insert the updated original row and new row
+                const newData = hasCustomValues ? [
+                    ...invoiceData.slice(0, selectedRow),
+                    updatedOriginalRow,
+                    newRow,
+                    ...invoiceData.slice(selectedRow + 1)
+                ] : [
                     ...invoiceData.slice(0, selectedRow + 1),
                     newRow,
                     ...invoiceData.slice(selectedRow + 1)
@@ -197,12 +252,21 @@
                 setInvoiceData(newData);
                 
                 const materialLabel = materialType === 'aluminum' ? 'Aluminum' : 'Steel';
-                const messageText = tariffResult.usingDefault 
+                let messageText = tariffResult.usingDefault 
                     ? `Row duplicated for ${materialLabel} with default value. Tariff ${tariffResult.tariff} not found in mappings.`
                     : `Row duplicated for ${materialLabel}! Applied: ${tariffResult.value} (Tariff: ${tariffResult.tariff})`;
                 
+                if (hasCustomValues) {
+                    messageText += ` Original row's ItemTotal reduced by ${newRowItemTotal.toFixed(2)}.`;
+                }
+                
                 setMessage({ type: 'success', text: messageText });
                 setSelectedRow(selectedRow + 1); // Select the newly created row
+                
+                // Clear the input fields after duplication
+                setQuantity('');
+                setUnitPrice('');
+                setItemTotal('');
             };
 
             const downloadFile = () => {
@@ -211,7 +275,55 @@
                     return;
                 }
 
-                const worksheet = XLSX.utils.json_to_sheet(invoiceData);
+                // Process the data to format dates correctly and remove internal properties
+                const processedData = invoiceData.map(row => {
+                    const newRow = { ...row };
+                    
+                    // Remove internal tracking properties
+                    delete newRow._duplicateGroupId;
+                    delete newRow._isDuplicate;
+                    
+                    // Format date columns - convert to actual Date objects
+                    const dateColumns = ['InvoiceDate', 'PO_Date', 'DateOfExport'];
+                    dateColumns.forEach(col => {
+                        if (newRow[col]) {
+                            if (typeof newRow[col] === 'number') {
+                                // Excel serial date number
+                                const date = XLSX.SSF.parse_date_code(newRow[col]);
+                                newRow[col] = new Date(date.y, date.m - 1, date.d);
+                            } else if (typeof newRow[col] === 'string') {
+                                // String date
+                                const date = new Date(newRow[col]);
+                                if (!isNaN(date.getTime())) {
+                                    newRow[col] = date;
+                                }
+                            }
+                            // If already a Date object, keep it
+                        }
+                    });
+                    
+                    return newRow;
+                });
+
+                const worksheet = XLSX.utils.json_to_sheet(processedData);
+                
+                // Apply mm/dd/yyyy format to date columns
+                const range = XLSX.utils.decode_range(worksheet['!ref']);
+                const header = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0];
+                
+                ['InvoiceDate', 'PO_Date', 'DateOfExport'].forEach(dateCol => {
+                    const colIndex = header.indexOf(dateCol);
+                    if (colIndex !== -1) {
+                        const colLetter = XLSX.utils.encode_col(colIndex);
+                        for (let row = 1; row <= range.e.r; row++) {
+                            const cellAddress = `${colLetter}${row + 1}`;
+                            if (worksheet[cellAddress] && worksheet[cellAddress].t !== 's') {
+                                worksheet[cellAddress].z = 'mm/dd/yyyy';
+                            }
+                        }
+                    }
+                });
+                
                 const workbook = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
                 
@@ -221,12 +333,34 @@
                 setMessage({ type: 'success', text: `File downloaded as ${newFileName}` });
             };
 
+            const deleteRow = (index) => {
+                const rowToDelete = invoiceData[index];
+                
+                // Only allow deletion of duplicated rows
+                if (!rowToDelete._isDuplicate) {
+                    setMessage({ type: 'error', text: 'Cannot delete original data rows. Only duplicated rows can be deleted.' });
+                    return;
+                }
+
+                const newData = invoiceData.filter((_, i) => i !== index);
+                setInvoiceData(newData);
+                
+                // Adjust selected row if necessary
+                if (selectedRow === index) {
+                    setSelectedRow(null);
+                } else if (selectedRow > index) {
+                    setSelectedRow(selectedRow - 1);
+                }
+                
+                setMessage({ type: 'success', text: 'Duplicated row deleted successfully.' });
+            };
+
             return (
                 <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-6">
                     <div className="max-w-7xl mx-auto">
                         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
                             <h1 className="text-3xl font-bold text-gray-800 mb-2">Invoice Line Duplicator</h1>
-                            <p className="text-gray-600 mb-6">Upload an invoice file, select a row, and duplicate it for Aluminum or Steel with automated part number mapping</p>
+                            <p className="text-gray-600 mb-6">Upload an invoice file, select a row, optionally override values, and duplicate it for Aluminum or Steel with automated part number mapping</p>
                             
                             {/* Message Display */}
                             {message && (
@@ -239,6 +373,48 @@
                                         <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
                                     )}
                                     <p className={message.type === 'success' ? 'text-green-800' : 'text-red-800'}>{message.text}</p>
+                                </div>
+                            )}
+
+                            {/* Optional Values Input Section */}
+                            {invoiceData.length > 0 && (
+                                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Optional: Override Values for Duplicated Row</h3>
+                                    <div className="grid grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-600 mb-1">Quantity</label>
+                                            <input
+                                                type="number"
+                                                value={quantity}
+                                                onChange={(e) => setQuantity(e.target.value)}
+                                                placeholder="Leave blank to use original"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-600 mb-1">Unit Price</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={unitPrice}
+                                                onChange={(e) => setUnitPrice(e.target.value)}
+                                                placeholder="Leave blank to use original"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-600 mb-1">Item Total</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={itemTotal}
+                                                onChange={(e) => setItemTotal(e.target.value)}
+                                                placeholder="Auto-calculated or original"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                            <p className="text-xs text-gray-500 mt-1">Auto-calculated if Qty & Price provided</p>
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 
